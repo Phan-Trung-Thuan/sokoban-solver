@@ -2,16 +2,31 @@
   "player_move_speed": 0.12,
   "even_square_shades": 0.15,
   "instant_move": false,
-  "auto_switch_to_next_unsolved_level": true,
+  "auto_switch_to_next_unsolved_level": false,
   "current_pack_idx": 0,
-  "current_level_idx": 0,
+  "current_level_idx": 5,
   "solved_levels": [
-    "pack_0_lvl_0"
+    "pack_0_lvl_3",
+    "pack_0_lvl_1",
+    "pack_0_lvl_4",
+    "pack_0_lvl_0",
+    "pack_0_lvl_2",
+    "pack_0_lvl_5"
   ],
   "best_moves": {
-    "pack_0_lvl_0": 33
+    "pack_0_lvl_0": 33,
+    "pack_0_lvl_1": 16,
+    "pack_0_lvl_2": 41,
+    "pack_0_lvl_3": 23,
+    "pack_0_lvl_4": 25,
+    "pack_0_lvl_5": 107
   },
   "best_pushes": {
-    "pack_0_lvl_0": 8
+    "pack_0_lvl_0": 8,
+    "pack_0_lvl_1": 3,
+    "pack_0_lvl_2": 13,
+    "pack_0_lvl_3": 7,
+    "pack_0_lvl_4": 8,
+    "pack_0_lvl_5": 29
   }
 }

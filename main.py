@@ -1,6 +1,7 @@
 """
 Sokoban – Complete game with:
-- AI Action Search Tree Solver (BFS / DFS)
+- AI Action Search Tree Solver (BFS / DFS / Greedy / A* / IDS)
+- Monodirectional or bidirectional search for each algorithm
 - Real-time visual tree growth & step-by-step solution replay
 - Full Level Management & Settings (Packs: Microban, Microban II, Box World)
 - Unsolved level tracking, chessboard floor shading, instant move, and settings modal dialog.
@@ -325,6 +326,11 @@ class Button:
         border_col = (140, 180, 220) if self.is_active else (80, 95, 115)
         pygame.draw.rect(surface, border_col, self.rect, width=1, border_radius=6)
         txt = font.render(self.text, True, BTN_FG)
+        if txt.get_width() > self.rect.width - 8:
+            ratio = max(1, self.rect.width - 8) / txt.get_width()
+            txt = pygame.transform.smoothscale(
+                txt, (max(1, self.rect.width - 8), max(1, int(txt.get_height() * ratio)))
+            )
         tx = self.rect.x + (self.rect.width - txt.get_width()) // 2
         ty = self.rect.y + (self.rect.height - txt.get_height()) // 2
         surface.blit(txt, (tx, ty))
@@ -348,7 +354,7 @@ def main():
     info = pygame.display.Info()
     win_w, win_h = info.current_w, info.current_h
     screen = pygame.display.set_mode((win_w, win_h), pygame.RESIZABLE)
-    pygame.display.set_caption("Sokoban with Action Tree Solver (BFS / DFS)")
+    pygame.display.set_caption("Sokoban with Action Tree Solver (BFS / DFS / Greedy / A* / IDS)")
 
     try:
         import ctypes
@@ -390,6 +396,7 @@ def main():
 
     # Solver & Tree Visualization State
     current_algorithm = "BFS"
+    current_direction = "MONODIRECTIONAL"
     solver: SokobanSolver | None = None
     tree_viewer = TreeViewer()
 
@@ -427,9 +434,19 @@ def main():
 
     def toggle_algorithm():
         nonlocal current_algorithm, solver, solver_mode
-        current_algorithm = "DFS" if current_algorithm == "BFS" else "BFS"
+        algorithms = SokobanSolver.ALGORITHMS
+        current_algorithm = algorithms[(algorithms.index(current_algorithm) + 1) % len(algorithms)]
         solver = None
         solver_mode = "IDLE"
+        _rebuild_buttons()
+
+    def toggle_direction():
+        nonlocal current_direction, solver, solver_mode, replay_index
+        directions = SokobanSolver.DIRECTIONS
+        current_direction = directions[(directions.index(current_direction) + 1) % len(directions)]
+        solver = None
+        solver_mode = "IDLE"
+        replay_index = 0
         _rebuild_buttons()
 
     def toggle_solve():
@@ -439,7 +456,7 @@ def main():
         else:
             state.reset()
             solved_time = None
-            solver = SokobanSolver(levels_manager.current_level, current_algorithm)
+            solver = SokobanSolver(levels_manager.current_level, current_algorithm, current_direction)
             solver_mode = "SOLVING"
             replay_index = 0
         _rebuild_buttons()
@@ -501,7 +518,9 @@ def main():
 
         btn_specs = [
             ("Reset", 75, reset_level, False),
-            (f"Algo: {current_algorithm}", 110, toggle_algorithm, True),
+            (f"Algo: {current_algorithm.title() if current_algorithm == 'GREEDY' else current_algorithm}",
+             110, toggle_algorithm, True),
+            (current_direction.title(), 140, toggle_direction, True),
             ("Stop" if solver_mode == "SOLVING" else "Solve", 80, toggle_solve, solver_mode == "SOLVING"),
             (f"Speed: {search_speed}", 115, cycle_speed, False),
             ("Replay", 80, start_replay, solver_mode == "REPLAYING"),
@@ -514,6 +533,12 @@ def main():
         ]
 
         total_w = sum(w for _, w, _, _ in btn_specs)
+        available_w = max(len(btn_specs), win_w - 12 - 4 * (len(btn_specs) - 1))
+        if total_w > available_w:
+            ratio = available_w / total_w
+            btn_specs = [(text, max(1, int(w * ratio)), cb, active)
+                         for text, w, cb, active in btn_specs]
+            total_w = sum(w for _, w, _, _ in btn_specs)
         gap = max(4, min(10, (win_w - total_w) // (len(btn_specs) + 1)))
         total_w_with_gaps = total_w + gap * (len(btn_specs) - 1)
         start_x = max(6, (win_w - total_w_with_gaps) // 2)
@@ -738,15 +763,20 @@ def main():
         screen.blit(lt, (14, (HUD_HEIGHT - lt.get_height()) // 2))
 
         # Center Status Banner
+        search_label = f"{'Bi' if current_direction == 'BIDIRECTIONAL' else 'Mono'} {current_algorithm}"
         if solver_mode == "SOLVING":
-            status_str = f"[{current_algorithm} SEARCHING...] Nodes Explored: {solver.steps_explored if solver else 0}"
+            limit_text = f" limit {solver.depth_limit}" if solver and current_algorithm == "IDS" else ""
+            status_str = f"[{search_label}{limit_text} SEARCHING...]"
             status_col = (255, 220, 60)
         elif solver_mode == "REPLAYING":
             status_str = f"[REPLAYING SOLUTION] Step {replay_index} / {len(solver.solution_actions) if solver else 0}"
             status_col = (50, 220, 255)
         elif solver and solver.solved:
-            status_str = f"[{current_algorithm} SOLVED] Solution Length: {len(solver.solution_actions)} moves"
+            status_str = f"[{search_label} SOLVED] Solution Length: {len(solver.solution_actions)} moves"
             status_col = (80, 255, 140)
+        elif solver and solver.finished:
+            status_str = f"[{search_label}] NO SOLUTION"
+            status_col = (255, 170, 100)
         elif state.solved:
             status_str = "LEVEL SOLVED!"
             status_col = (80, 255, 140)
@@ -755,7 +785,17 @@ def main():
             status_col = (180, 195, 215)
 
         st_surf = hud_status_font.render(status_str, True, status_col)
-        screen.blit(st_surf, ((win_w - st_surf.get_width()) // 2, (HUD_HEIGHT - st_surf.get_height()) // 2))
+        if solver:
+            checks_surf = hud_status_font.render(
+                f"States checked: {solver.steps_explored:,}", True, (180, 195, 215)
+            )
+            status_y = (HUD_HEIGHT - st_surf.get_height() - checks_surf.get_height() - 2) // 2
+            screen.blit(st_surf, ((win_w - st_surf.get_width()) // 2, status_y))
+            screen.blit(checks_surf, (
+                (win_w - checks_surf.get_width()) // 2, status_y + st_surf.get_height() + 2
+            ))
+        else:
+            screen.blit(st_surf, ((win_w - st_surf.get_width()) // 2, (HUD_HEIGHT - st_surf.get_height()) // 2))
 
         # Right stats (moves, pushes, and best record)
         best_k = f"pack_{game_config.current_pack_idx}_lvl_{game_config.current_level_idx}"

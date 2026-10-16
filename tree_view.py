@@ -22,14 +22,15 @@ ARROW_SYMBOLS = {
     'down': 'v',
     'left': '<',
     'right': '>',
-    'START': 'S'
+    'START': 'S',
+    'GOAL': 'G'
 }
 
 
 class TreeViewer:
     """
     Renders the action search tree within a specified screen rectangle.
-    Supports auto-following the search, manual drag-to-pan, and mouse-wheel zoom.
+    Supports free panning and zooming, with optional automatic search following.
     """
 
     def __init__(self):
@@ -41,6 +42,7 @@ class TreeViewer:
         self.zoom: float = 1.0
         self.target_zoom: float = 1.0
 
+        self.auto_follow = False
         self.dragging = False
         self.drag_start_pos = (0, 0)
         self.drag_start_cam = (0.0, 0.0)
@@ -62,6 +64,8 @@ class TreeViewer:
         self.rect = rect
 
     def reset_view(self):
+        self.auto_follow = False
+        self.dragging = False
         self.cam_x = 100.0
         self.cam_y = 300.0
         self.target_cam_x = 100.0
@@ -69,15 +73,24 @@ class TreeViewer:
         self.zoom = 1.0
         self.target_zoom = 1.0
 
+    def _stop_following(self):
+        self.auto_follow = False
+        self.target_cam_x = self.cam_x
+        self.target_cam_y = self.cam_y
+
     def handle_event(self, event: pygame.event.Event):
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1 and self.rect.collidepoint(event.pos):
+                self._stop_following()
+                self.target_zoom = self.zoom
                 self.dragging = True
                 self.drag_start_pos = event.pos
                 self.drag_start_cam = (self.cam_x, self.cam_y)
             elif event.button == 4 and self.rect.collidepoint(event.pos):  # Scroll up -> Zoom in
+                self._stop_following()
                 self.target_zoom = min(2.5, self.target_zoom * 1.15)
             elif event.button == 5 and self.rect.collidepoint(event.pos):  # Scroll down -> Zoom out
+                self._stop_following()
                 self.target_zoom = max(0.25, self.target_zoom / 1.15)
             elif event.button == 3 and self.rect.collidepoint(event.pos):  # Right click -> reset
                 self.reset_view()
@@ -95,11 +108,23 @@ class TreeViewer:
                 self.target_cam_x = self.cam_x
                 self.target_cam_y = self.cam_y
 
+        elif event.type == pygame.MOUSEWHEEL:
+            if self.rect.collidepoint(pygame.mouse.get_pos()) and event.y:
+                self._stop_following()
+                self.target_zoom = max(0.25, min(2.5, self.target_zoom * 1.15 ** event.y))
+
+        elif event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+            if self.rect.collidepoint(pygame.mouse.get_pos()):
+                if self.auto_follow:
+                    self._stop_following()
+                else:
+                    self.auto_follow = True
+
     def update(self, dt: float, solver: SokobanSolver | None, replay_nid: int | None = None):
         self._pulse_timer += dt * 5.0
 
-        # Auto-track camera target if not user-dragging
-        if not self.dragging and solver and solver.nodes:
+        # Following is opt-in; manual navigation keeps its position during search/replay.
+        if self.auto_follow and not self.dragging and solver and solver.nodes:
             if replay_nid is not None and replay_nid < len(solver.nodes):
                 target_node = solver.nodes[replay_nid]
                 self.target_cam_x = target_node.x
@@ -109,7 +134,8 @@ class TreeViewer:
                 self.target_cam_x = target_node.x
                 self.target_cam_y = target_node.y
 
-            # Smooth lerp
+        # Smooth navigation also works before a solver exists and after completion.
+        if not self.dragging:
             self.cam_x += (self.target_cam_x - self.cam_x) * min(1.0, dt * 6.0)
             self.cam_y += (self.target_cam_y - self.cam_y) * min(1.0, dt * 6.0)
             self.zoom += (self.target_zoom - self.zoom) * min(1.0, dt * 8.0)
@@ -152,10 +178,27 @@ class TreeViewer:
             nodes = solver.nodes
             cur_active_id = solver.current_node
 
-            # Limit drawn nodes for ultra-fast rendering if tree is gigantic
-            # Always include solution path + recent nodes
+            # Keep the active branch and solution visible even in large searches.
             max_draw = min(len(nodes), 2000)
-            drawn_nodes = nodes[:max_draw]
+            drawn_ids = set(range(max_draw))
+            drawn_ids.update(solver.solution_path)
+            current = cur_active_id
+            while current is not None and current not in drawn_ids:
+                drawn_ids.add(current)
+                current = nodes[current].pid
+            if solver.meeting_nodes:
+                for meeting in solver.meeting_nodes:
+                    current = meeting
+                    while current is not None:
+                        drawn_ids.add(current)
+                        current = nodes[current].pid
+            drawn_nodes = [nodes[nid] for nid in sorted(drawn_ids)]
+
+            if solver.meeting_nodes:
+                first, second = (nodes[nid] for nid in solver.meeting_nodes)
+                pygame.draw.line(surface, (200, 130, 255),
+                                 self.world_to_screen(first.x, first.y),
+                                 self.world_to_screen(second.x, second.y), 2)
 
             # 1. Draw connecting lines
             for node in drawn_nodes:
@@ -200,7 +243,8 @@ class TreeViewer:
                 elif node.nid == 0:
                     color = (160, 110, 255)     # Root: Purple
                 elif node.is_frontier:
-                    color = (0, 200, 255)       # Frontier: Cyan
+                    color = ((185, 120, 255) if node.side == 'BACKWARD' else
+                             (0, 200, 255))
                 else:
                     color = (80, 100, 125)      # Visited: Slate Blue
 
@@ -231,12 +275,16 @@ class TreeViewer:
         pygame.draw.rect(surface, (60, 75, 95), clip_rect, 2)
 
         # Top Banner / Status inside tree panel
-        banner_h = 32
+        banner_h = 52
         banner_rect = pygame.Rect(clip_rect.x, clip_rect.y, clip_rect.width, banner_h)
         pygame.draw.rect(surface, (12, 16, 24), banner_rect)
         pygame.draw.line(surface, (50, 65, 85), (banner_rect.left, banner_rect.bottom), (banner_rect.right, banner_rect.bottom), 1)
 
         algo_name = solver.algorithm if solver else "BFS"
+        if solver and solver.direction == "BIDIRECTIONAL":
+            algo_name = f"Bi {algo_name}"
+        if solver and solver.algorithm == "IDS":
+            algo_name += f" limit {solver.depth_limit}"
         status_txt = "IDLE"
         if solver:
             if solver.solved:
@@ -244,11 +292,21 @@ class TreeViewer:
             elif solver.finished:
                 status_txt = "NO SOLUTION"
             else:
-                status_txt = f"SEARCHING... ({solver.steps_explored} steps)"
+                status_txt = "SEARCHING..."
 
         title_str = f"ACTION SEARCH TREE [{algo_name}] - {status_txt}"
         title_surf = self.font_header.render(title_str, True, (240, 240, 240))
-        surface.blit(title_surf, (banner_rect.x + 10, banner_rect.y + (banner_h - title_surf.get_height()) // 2))
+        title_y = banner_rect.y + (32 - title_surf.get_height()) // 2
+        surface.blit(title_surf, (banner_rect.x + 10, title_y))
+        detail_text = (f"States checked: {solver.steps_explored:,}" if solver else
+                       "Drag: pan | Wheel: zoom | Right-click: reset")
+        detail_surf = self.font_legend.render(detail_text, True, (180, 195, 215))
+        surface.blit(detail_surf, (banner_rect.x + 10, banner_rect.y + 32))
+        camera_text = f"Camera: {'Follow' if self.auto_follow else 'Free'} (F)"
+        camera_surf = self.font_legend.render(camera_text, True, (180, 195, 215))
+        surface.blit(camera_surf, (
+            banner_rect.right - camera_surf.get_width() - 10, banner_rect.y + 32
+        ))
 
         # Bottom Legend Bar
         legend_h = 24

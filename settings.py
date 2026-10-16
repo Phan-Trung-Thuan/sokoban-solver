@@ -22,7 +22,7 @@ class GameConfig:
         self.player_move_speed: float = 0.12        # seconds per step
         self.even_square_shades: float = 0.15       # chessboard floor shading
         self.instant_move: bool = False             # skip animation
-        self.auto_switch_to_next_unsolved_level: bool = True
+        self.auto_switch_to_next_unsolved_level: bool = False
         self.current_pack_idx: int = 0
         self.current_level_idx: int = 0
         self.solved_levels: set[str] = set()        # e.g. "pack_0_lvl_0"
