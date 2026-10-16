@@ -1,0 +1,17 @@
+{
+  "player_move_speed": 0.12,
+  "even_square_shades": 0.15,
+  "instant_move": false,
+  "auto_switch_to_next_unsolved_level": true,
+  "current_pack_idx": 0,
+  "current_level_idx": 0,
+  "solved_levels": [
+    "pack_0_lvl_0"
+  ],
+  "best_moves": {
+    "pack_0_lvl_0": 33
+  },
+  "best_pushes": {
+    "pack_0_lvl_0": 8
+  }
+}
